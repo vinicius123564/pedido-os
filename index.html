@@ -53,6 +53,9 @@
   }
   .btn-primary:hover { filter: brightness(0.95); }
   .btn-primary.closing { background: #3A3D40; }
+  .btn-logout {
+    background: none; color: var(--muted); font-size: 12px; text-decoration: underline;
+  }
 
   .error-banner {
     background: #FBEAEA; color: #A33; border: 1px solid #EFC5C5;
@@ -113,10 +116,43 @@
   .footer-note { color: var(--muted2); font-size: 12px; text-align: center; margin-top: 20px; }
 
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Login overlay */
+  #loginOverlay {
+    position: fixed; inset: 0; background: var(--bg); display: flex;
+    align-items: center; justify-content: center; z-index: 50;
+  }
+  .login-box {
+    background: #fff; border-radius: 10px; padding: 28px; width: 320px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08); text-align: center;
+  }
+  .login-box h2 { font-size: 16px; margin: 0 0 16px; text-transform: uppercase; letter-spacing: 0.02em; }
+  .login-box input {
+    width: 100%; border: 1px solid #D8D8D5; border-radius: 6px; padding: 9px 10px;
+    font-size: 14px; margin-bottom: 10px; outline: none;
+  }
+  .login-box input:focus { border-color: var(--accent); }
+  .login-box button {
+    width: 100%; background: var(--dark); color: #fff; font-weight: 700;
+    padding: 10px 0; border-radius: 6px; font-size: 14px;
+  }
+  .login-error { color: #A33; font-size: 12px; margin-top: 8px; min-height: 14px; }
+  #appRoot { display: none; }
 </style>
 </head>
 <body>
 
+<div id="loginOverlay">
+  <div class="login-box">
+    <h2>Painel de Peças</h2>
+    <input type="email" id="loginEmail" placeholder="E-mail" autocomplete="username" />
+    <input type="password" id="loginSenha" placeholder="Senha" autocomplete="current-password" />
+    <button id="loginBtn">Entrar</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<div id="appRoot">
 <div class="wrap">
   <div class="header">
     <div class="header-left">
@@ -131,6 +167,7 @@
     <div class="header-right">
       <span class="sync-note" id="syncNote"></span>
       <button class="btn-primary" id="toggleFormBtn">+ Nova O.S.</button>
+      <button class="btn-logout" id="logoutBtn">Sair</button>
     </div>
   </div>
 
@@ -170,12 +207,13 @@
 
   <p class="footer-note">Este painel é compartilhado — qualquer computador que abrir este link vê e edita as mesmas O.S., atualizando na hora.</p>
 </div>
+</div>
 
 <!-- ======================= FIREBASE ======================= -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script>
-  // >>> COLE AQUI a configuração do seu projeto Firebase (Project settings > SDK setup and configuration) <<<
   const firebaseConfig = {
     apiKey: "AIzaSyAfOFIqKEXIEeXzfJXlhtybIY3XsiT7Eys",
     authDomain: "pedidos-5bf5a.firebaseapp.com",
@@ -188,6 +226,7 @@
 
   firebase.initializeApp(firebaseConfig);
   const db = firebase.database();
+  const auth = firebase.auth();
   const ordersRef = db.ref("ordens_servico");
 </script>
 <!-- =========================================================== -->
@@ -199,14 +238,14 @@
     { id: 'entregue', label: 'Entregue', accent: 'var(--delivered-accent)', bg: 'var(--delivered-bg)', dot: 'var(--delivered-dot)' },
   ];
 
-  let entries = {}; // firebase key -> entry object
+  let entries = {};
   let pendingConfirm = null;
+  let currentRole = null; // 'admin' | 'consultor'
 
   function nextStatusId(id) {
     const idx = STATUS.findIndex(s => s.id === id);
     return (idx >= 0 && idx < STATUS.length - 1) ? STATUS[idx + 1].id : null;
   }
-  function statusMeta(id) { return STATUS.find(s => s.id === id) || STATUS[0]; }
   function todayISO() { return new Date().toISOString().slice(0, 10); }
   function fmtDate(iso) {
     if (!iso) return '';
@@ -219,6 +258,44 @@
 
   document.getElementById('f_data').value = todayISO();
 
+  // ---------- LOGIN ----------
+  document.getElementById('loginBtn').addEventListener('click', doLogin);
+  document.getElementById('loginSenha').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+  function doLogin() {
+    const email = document.getElementById('loginEmail').value.trim();
+    const senha = document.getElementById('loginSenha').value;
+    const errBox = document.getElementById('loginError');
+    errBox.textContent = '';
+    auth.signInWithEmailAndPassword(email, senha).catch(() => {
+      errBox.textContent = 'E-mail ou senha incorretos.';
+    });
+  }
+
+  document.getElementById('logoutBtn').addEventListener('click', () => auth.signOut());
+
+  auth.onAuthStateChanged((user) => {
+    if (!user) {
+      document.getElementById('loginOverlay').style.display = 'flex';
+      document.getElementById('appRoot').style.display = 'none';
+      currentRole = null;
+      return;
+    }
+    db.ref('roles/' + user.uid).once('value').then((snap) => {
+      currentRole = snap.val() || 'consultor';
+      document.getElementById('loginOverlay').style.display = 'none';
+      document.getElementById('appRoot').style.display = 'block';
+      applyRoleToUI();
+      render();
+    });
+  });
+
+  function applyRoleToUI() {
+    const toggleBtn = document.getElementById('toggleFormBtn');
+    toggleBtn.style.display = (currentRole === 'admin') ? 'flex' : 'none';
+  }
+
+  // ---------- FORM ----------
   const toggleBtn = document.getElementById('toggleFormBtn');
   const addForm = document.getElementById('addForm');
   toggleBtn.addEventListener('click', () => {
@@ -230,6 +307,7 @@
 
   addForm.addEventListener('submit', (e) => {
     e.preventDefault();
+    if (currentRole !== 'admin') return;
     const os = document.getElementById('f_os').value.trim();
     const cliente = document.getElementById('f_cliente').value.trim();
     if (!os || !cliente) return;
@@ -257,31 +335,23 @@
   function showError(err) {
     const banner = document.getElementById('errorBanner');
     banner.style.display = 'block';
-    banner.textContent = 'Não consegui salvar agora. Verifique a conexão e tente de novo.';
+    banner.textContent = 'Ação não permitida ou falha de conexão.';
     console.error(err);
   }
 
   function advance(key, entry) {
+    if (currentRole !== 'admin') return;
     const next = nextStatusId(entry.status);
     if (!next) return;
     ordersRef.child(key).update({ status: next }).catch(showError);
   }
 
-  function requestFinalize(key) {
-    pendingConfirm = key;
-    render();
-  }
-  function confirmFinalize(key) {
-    ordersRef.child(key).remove().catch(showError);
-    pendingConfirm = null;
-  }
-  function cancelConfirm() {
-    pendingConfirm = null;
-    render();
-  }
+  function requestFinalize(key) { pendingConfirm = key; render(); }
+  function confirmFinalize(key) { ordersRef.child(key).remove().catch(showError); pendingConfirm = null; }
+  function cancelConfirm() { pendingConfirm = null; render(); }
   function removeDirect(key) {
-    pendingConfirm = key;
-    render();
+    if (currentRole !== 'admin') return;
+    pendingConfirm = key; render();
   }
 
   window._painelActions = { advance, requestFinalize, confirmFinalize, cancelConfirm, removeDirect };
@@ -305,8 +375,8 @@
         items.forEach(([key, entry]) => {
           const nextId = nextStatusId(entry.status);
           let actionsHtml = '';
-          if (nextId) {
-            actionsHtml += `<button style="background:${col.bg};color:${col.accent}" onclick="_painelActions.advance('${key}', ${JSON.stringify(entry).replace(/"/g, '&quot;')})">Avançar ›</button>`;
+          if (nextId && currentRole === 'admin') {
+            actionsHtml += `<button style="background:${col.bg};color:${col.accent}" onclick='_painelActions.advance("${key}", ${JSON.stringify(entry)})'>Avançar ›</button>`;
           }
           if (entry.status === 'entregue') {
             actionsHtml += `<button style="background:var(--dark);color:#fff" onclick="_painelActions.requestFinalize('${key}')">Finalizar ✓</button>`;
@@ -327,11 +397,15 @@
               </div>`;
           }
 
+          const delBtn = (currentRole === 'admin')
+            ? `<button class="del-btn" title="Remover" onclick="_painelActions.removeDirect('${key}')">🗑</button>`
+            : '';
+
           cardsHtml += `
             <div class="card" style="border-left:4px solid ${col.accent}">
               <div class="card-top">
                 <div class="os-num">#${esc(entry.os)}</div>
-                <button class="del-btn" title="Remover" onclick="_painelActions.removeDirect('${key}')">🗑</button>
+                ${delBtn}
               </div>
               <div class="cliente">${esc(entry.cliente)}</div>
               ${entry.modelo ? `<div class="meta-line">🏍 ${esc(entry.modelo)}</div>` : ''}
@@ -360,13 +434,11 @@
 
   ordersRef.on('value', (snapshot) => {
     entries = snapshot.val() || {};
-    render();
+    if (currentRole) render();
     const note = document.getElementById('syncNote');
     note.textContent = 'Sincronizado';
     setTimeout(() => { note.textContent = ''; }, 1600);
   }, showError);
-
-  render();
 </script>
 
 </body>
