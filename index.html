@@ -279,6 +279,7 @@
       document.getElementById('loginOverlay').style.display = 'flex';
       document.getElementById('appRoot').style.display = 'none';
       currentRole = null;
+      detachListener();
       return;
     }
     db.ref('roles/' + user.uid).once('value').then((snap) => {
@@ -286,6 +287,7 @@
       document.getElementById('loginOverlay').style.display = 'none';
       document.getElementById('appRoot').style.display = 'block';
       applyRoleToUI();
+      attachListener();
       render();
     });
   });
@@ -339,8 +341,10 @@
     console.error(err);
   }
 
-  function advance(key, entry) {
+  function advance(key) {
     if (currentRole !== 'admin') return;
+    const entry = entries[key];
+    if (!entry) return;
     const next = nextStatusId(entry.status);
     if (!next) return;
     ordersRef.child(key).update({ status: next }).catch(showError);
@@ -376,7 +380,7 @@
           const nextId = nextStatusId(entry.status);
           let actionsHtml = '';
           if (nextId && currentRole === 'admin') {
-            actionsHtml += `<button style="background:${col.bg};color:${col.accent}" onclick='_painelActions.advance("${key}", ${JSON.stringify(entry)})'>Avançar ›</button>`;
+            actionsHtml += `<button style="background:${col.bg};color:${col.accent}" onclick="_painelActions.advance('${key}')">Avançar ›</button>`;
           }
           if (entry.status === 'entregue') {
             actionsHtml += `<button style="background:var(--dark);color:#fff" onclick="_painelActions.requestFinalize('${key}')">Finalizar ✓</button>`;
@@ -432,13 +436,23 @@
     });
   }
 
-  ordersRef.on('value', (snapshot) => {
-    entries = snapshot.val() || {};
-    if (currentRole) render();
-    const note = document.getElementById('syncNote');
-    note.textContent = 'Sincronizado';
-    setTimeout(() => { note.textContent = ''; }, 1600);
-  }, showError);
+  let listenerAttached = false;
+  function attachListener() {
+    if (listenerAttached) return;
+    listenerAttached = true;
+    ordersRef.on('value', (snapshot) => {
+      entries = snapshot.val() || {};
+      document.getElementById('errorBanner').style.display = 'none';
+      if (currentRole) render();
+      const note = document.getElementById('syncNote');
+      note.textContent = 'Sincronizado';
+      setTimeout(() => { note.textContent = ''; }, 1600);
+    }, showError);
+  }
+  function detachListener() {
+    ordersRef.off();
+    listenerAttached = false;
+  }
 </script>
 
 </body>
